@@ -1,0 +1,42 @@
+{
+  "card_url": "https://grls.rosminzdrav.ru/Grls_View_v2.aspx?routingGuid=437f46de-34cb-4d8f-820b-6fbac6bd88fb",
+  "ru_num": "ЛП-007659",
+  "trade_name": "Норэпинефрин Калцекс",
+  "note": "поле hfInstructionModel пустое; список файлов получен через AddInstrImg",
+  "files": [
+    {
+      "source": 0,
+      "instruction": 0,
+      "image": 0,
+      "source_name": "GRLS",
+      "instruction_label": "ЛП-007659, 2021",
+      "url": "\\InstrImg\\2022\\09\\22\\1485610\\b26a9dda-342c-4264-8382-8ee658c6c018.pdf",
+      "label": "Изм. № 0, ЛП-007659, 2021",
+      "amendment_no": 0,
+      "year": 2021,
+      "role": "main",
+      "file_url": "https://grls.rosminzdrav.ru/InstrImg/2022/09/22/1485610/b26a9dda-342c-4264-8382-8ee658c6c018.pdf",
+      "file": "00_00_00_b26a9dda-342c-4264-8382-8ee658c6c018.pdf",
+      "bytes": 5821961,
+      "sha256": "ff18070fa30725b214b3813f695e6fe6fc98f9e85eebffe0519eeb5185a085b1",
+      "is_pdf": true
+    },
+    {
+      "source": 0,
+      "instruction": 1,
+      "image": 0,
+      "source_name": "GRLS",
+      "instruction_label": "ЛП-007659, 2022",
+      "url": "\\InstrImg\\2022\\09\\22\\1485610\\5fc8689c-f64b-41a3-8412-c543581eaf04.pdf",
+      "label": "Изм. № 1, ЛП-007659, 2022",
+      "amendment_no": 1,
+      "year": 2022,
+      "role": "amendment",
+      "file_url": "https://grls.rosminzdrav.ru/InstrImg/2022/09/22/1485610/5fc8689c-f64b-41a3-8412-c543581eaf04.pdf",
+      "file": "00_01_00_5fc8689c-f64b-41a3-8412-c543581eaf04.pdf",
+      "bytes": 2635291,
+      "sha256": "0911bd8c827423225892cb723d702777539cd3bed7aec28790ef5ad64ef26b53",
+      "is_pdf": true
+    }
+  ]
+}

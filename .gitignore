@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Куда по умолчанию складываются результаты запуска — не часть репозитория
+kb/
+output/
+instructions_output/
