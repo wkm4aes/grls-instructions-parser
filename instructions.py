@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Скачивание инструкций из карточек ГРЛС по списку адресов карточек, GUID или номеров РУ.
+"""Скачивание инструкций из карточек ГРЛС по списку адресов карточек, GUID, номеров РУ или названий.
 
 Как это устроено (по коду страницы grls.rosminzdrav.ru):
-  0. Поиск карточки по номеру РУ (или любому тексту из строки поиска):
-     POST /GRLS.aspx с полями формы (viewstate/eventvalidation из предварительного
-     GET + ctl00$plate$txtRegNm=<номер РУ> + ctl00$plate$bSeek=Найти). В ответе —
-     таблица #ctl00_plate_gr, строки которой несут onclick="det('<guid>', <isFS>)".
+  0. Поиск карточки — POST /GRLS.aspx с полями формы (viewstate/eventvalidation
+     из предварительного GET + ctl00$plate$bSeek=Найти). Строка, похожая на номер
+     РУ (ЛП-/ЛС-/ЛСР-), ищется в поле ctl00$plate$txtRegNm и даёт одну карточку;
+     любой другой текст ищется как название — сразу в двух полях,
+     ctl00$plate$txtTorg (торговое наименование) и ctl00$plate$txtMNN (МНН), —
+     и может дать сразу несколько карточек (разные производители одного МНН,
+     разные формы выпуска и т.п.). В ответе — таблица #ctl00_plate_gr, строки
+     которой несут onclick="det('<guid>', <isFS>)".
      Капча на этой странице (canvas, jquery-captcha) — чисто клиентская проверка:
      ответ сверяется в браузере и никуда не отправляется, сервер его не видит,
      так что обычный постбэк без браузера проходит и без «решения» капчи.
@@ -43,13 +47,19 @@ FS_CARD_URL = "https://grls.rosminzdrav.ru/Grls_viewFS_v2.aspx?routingGuid={guid
 SEARCH_URL = "https://grls.rosminzdrav.ru/GRLS.aspx"
 INSTR_PATH = "/GRLS_View_V2.aspx/AddInstrImg"
 GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
+REGNUM_RE = re.compile(r"^Л[СП]Р?-", re.IGNORECASE)  # ЛП-, ЛС-, ЛСР- — похоже на номер РУ
 DET_RE = re.compile(r"det\('([0-9a-fA-F-]{36})'\s*,\s*(\d)\)")
 AMEND_RE = re.compile(r"Изм\.?\s*№\s*(\d+)")
 YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
+SEARCH_PAGE_COUNT = "200"  # сколько строк просить у сайта за один поисковый запрос
+
+# Поля формы поиска ГРЛС (ctl00$plate$...), который из них нести запрос —
+# остальные уходят пустыми.
+SEARCH_FIELDS = ("txtRegNm", "txtMNN", "LF", "txtTorg", "ownName", "txtMnf", "txtMnfCountry")
 
 
-def search_by_regnum(sess: requests.Session, reg_num: str) -> list[dict]:
-    """Ищет карточки на странице поиска ГРЛС по номеру РУ (точный текстовый поиск сайта).
+def search_grls(sess: requests.Session, field: str, query: str) -> list[dict]:
+    """POST-постбэк формы поиска ГРЛС с заполненным одним полем (`field` — например, «txtTorg»).
 
     Капча на странице поиска — не серверная проверка: это открытая JS-библиотека
     jquery-captcha, рисующая код на canvas и сверяющая ответ тут же в браузере;
@@ -70,18 +80,21 @@ def search_by_regnum(sess: requests.Session, reg_num: str) -> list[dict]:
         "__VIEWSTATEENCRYPTED": "",
         "__EVENTVALIDATION": val("__EVENTVALIDATION"),
         "ctl00$plate$isFS": "0",
-        "ctl00$plate$txtRegNm": reg_num,
-        "ctl00$plate$txtMNN": "", "ctl00$plate$LF": "", "ctl00$plate$txtTorg": "",
-        "ctl00$plate$ownName": "", "ctl00$plate$txtMnf": "", "ctl00$plate$txtMnfCountry": "",
+        **{f"ctl00$plate${f}": "" for f in SEARCH_FIELDS},
         "ctl00$plate$hfRegType": val("ctl00_plate_hfRegType") or "1,6",
-        "ctl00$plate$txtRecordOnPageCount": "20",
+        "ctl00$plate$txtRecordOnPageCount": SEARCH_PAGE_COUNT,
         "ctl00$plate$bSeek": "Найти",
     }
+    data[f"ctl00$plate${field}"] = query
     r2 = sess.post(SEARCH_URL, data=data, timeout=30, headers={"Referer": SEARCH_URL, "Origin": origin(SEARCH_URL)})
     soup2 = BeautifulSoup(r2.content, "html.parser")
     grid = soup2.find(id=re.compile("ctl00_plate_gr"))
+    rows = grid.find_all("tr")[1:] if grid else []
+    if len(rows) == int(SEARCH_PAGE_COUNT):
+        print(f"  предупреждение: по «{query}» найдено ровно {SEARCH_PAGE_COUNT} карточек — "
+              f"возможно, результат обрезан сайтом, уточните запрос", file=__import__("sys").stderr)
     results = []
-    for tr in (grid.find_all("tr")[1:] if grid else []):
+    for tr in rows:
         m = DET_RE.search(tr.get("onclick", ""))
         if not m:
             continue
@@ -95,24 +108,58 @@ def search_by_regnum(sess: requests.Session, reg_num: str) -> list[dict]:
     return results
 
 
-def resolve_card_url(sess: requests.Session, query: str) -> str:
-    """Находит карточку препарата по тексту (обычно — номеру РУ) через поиск сайта."""
-    results = search_by_regnum(sess, query)
+def search_by_regnum(sess: requests.Session, reg_num: str) -> list[dict]:
+    """Ищет карточки по номеру РУ (поле «Номер регистрационного удостоверения»)."""
+    return search_grls(sess, "txtRegNm", reg_num)
+
+
+def search_by_name(sess: requests.Session, name: str) -> list[dict]:
+    """Ищет карточки по названию: и как торговое наименование, и как МНН, результат объединяется.
+
+    Один и тот же текст может совпасть с разными препаратами в каждом из полей
+    (например, «Парацетамол» — это и частое торговое название, и МНН), поэтому
+    карточки из обоих запросов объединяются и дедуплицируются по guid.
+    """
+    seen: dict[str, dict] = {}
+    for field in ("txtTorg", "txtMNN"):
+        for r in search_grls(sess, field, name):
+            seen.setdefault(r["guid"], r)
+    return list(seen.values())
+
+
+def result_url(r: dict) -> str:
+    template = FS_CARD_URL if r["is_fs"] else CARD_URL
+    return template.format(guid=r["guid"])
+
+
+def resolve_card_urls(sess: requests.Session, line: str) -> list[str]:
+    """Превращает строку cards.txt в один или несколько адресов карточек.
+
+    Номер РУ (начинается на ЛП-/ЛС-/ЛСР-) ищется точным текстовым поиском и даёт
+    одну карточку. Любой другой текст считается названием (торговым или МНН) и
+    может дать сразу несколько карточек — например, разных производителей
+    одного МНН, или просто вариантов написания названия.
+    """
+    if REGNUM_RE.match(line):
+        results = search_by_regnum(sess, line)
+        if not results:
+            raise ValueError(f"номер РУ «{line}» не найден")
+        exact = [r for r in results if r["ru_num"] == line]
+        chosen = exact[0] if exact else results[0]
+        return [result_url(chosen)]
+    results = search_by_name(sess, line)
     if not results:
-        raise ValueError(f"поиск по «{query}» не дал результатов")
-    exact = [r for r in results if r["ru_num"] == query]
-    chosen = exact[0] if exact else results[0]
-    template = FS_CARD_URL if chosen["is_fs"] else CARD_URL
-    return template.format(guid=chosen["guid"])
+        raise ValueError(f"по названию «{line}» ничего не найдено")
+    return [result_url(r) for r in results]
 
 
-def card_url(sess: requests.Session, line: str) -> str:
+def card_url(sess: requests.Session, line: str) -> list[str]:
     line = line.strip()
     if GUID_RE.match(line):
-        return CARD_URL.format(guid=line)
+        return [CARD_URL.format(guid=line)]
     if line.startswith("http://") or line.startswith("https://"):
-        return line
-    return resolve_card_url(sess, line)
+        return [line]
+    return resolve_card_urls(sess, line)
 
 
 def origin(url: str) -> str:
@@ -239,13 +286,16 @@ def main() -> None:
 
     for i, line in enumerate(lines, 1):
         try:
-            url = card_url(sess, line)
+            urls = card_url(sess, line)
         except Exception as e:  # noqa: BLE001 — не нашли карточку, идём к следующей строке
             print(f"[{i}/{len(lines)}] {line}: не удалось найти карточку ({e})")
             continue
-        m = process_card(sess, url, a.out)
-        print(f"[{i}/{len(lines)}] {m['ru_num'] or url}: файлов {len(m['files'])}"
-              + (f" ({m['note']})" if m["note"] else ""))
+        if len(urls) > 1:
+            print(f"[{i}/{len(lines)}] {line}: найдено {len(urls)} карточек")
+        for url in urls:
+            m = process_card(sess, url, a.out)
+            print(f"[{i}/{len(lines)}] {m['ru_num'] or url}: файлов {len(m['files'])}"
+                  + (f" ({m['note']})" if m["note"] else ""))
 
 
 if __name__ == "__main__":
